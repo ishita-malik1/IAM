@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IAM Risk Digest — {{ generated_at }}</title>
+  <style>
+    :root {
+      --color-text: #111827;
+      --color-muted: #6b7280;
+      --color-border: #e5e7eb;
+      --color-soft-bg: #f9fafb;
+      --color-soft-border: #d1d5db;
+      --color-high: #DC2626;
+      --color-medium: #D97706;
+      --color-low: #16A34A;
+      --color-info-bg: #fffbeb;
+      --color-info-border: #fcd34d;
+      --color-baseline-bg: #eff6ff;
+      --color-baseline-border: #bfdbfe;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+      color: var(--color-text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   Oxygen-Sans, Ubuntu, Cantarell, "Helvetica Neue", Arial,
+                   sans-serif;
+      font-size: 15px;
+      line-height: 1.55;
+    }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 32px 28px 64px;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      margin: 0 0 4px;
+      letter-spacing: -0.01em;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      margin: 0 0 16px;
+      letter-spacing: -0.005em;
+    }
+
+    h3 {
+      font-size: 1rem;
+      margin: 0 0 8px;
+    }
+
+    p { margin: 0 0 12px; }
+
+    .muted { color: var(--color-muted); }
+
+    .meta {
+      color: var(--color-muted);
+      font-size: 0.9rem;
+      margin-bottom: 28px;
+    }
+
+    .section {
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      padding: 24px 24px 20px;
+      margin-bottom: 24px;
+      background: #ffffff;
+      page-break-inside: avoid;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .section-header .section-subtitle {
+      color: var(--color-muted);
+      font-size: 0.875rem;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #ffffff;
+    }
+    .badge-high   { background: var(--color-high); }
+    .badge-medium { background: var(--color-medium); }
+    .badge-low    { background: var(--color-low); }
+
+    .risk-badge {
+      display: inline-block;
+      padding: 8px 22px;
+      border-radius: 8px;
+      font-size: 1.6rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: #ffffff;
+    }
+    .risk-high   { background: var(--color-high); }
+    .risk-medium { background: var(--color-medium); }
+    .risk-low    { background: var(--color-low); }
+
+    .pill {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: #f3f4f6;
+      color: #374151;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin: 16px 0 8px;
+    }
+
+    .metric-card {
+      border: 1px solid var(--color-border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      background: var(--color-soft-bg);
+    }
+
+    .metric-card .label {
+      color: var(--color-muted);
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .metric-card .value {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-top: 2px;
+    }
+
+    .baseline-notice,
+    .data-quality-notice,
+    .empty-state {
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 12px 0 0;
+      background: var(--color-baseline-bg);
+      border: 1px solid var(--color-baseline-border);
+    }
+
+    .data-quality-notice {
+      background: var(--color-info-bg);
+      border-color: var(--color-info-border);
+    }
+
+    .data-quality-notice ul {
+      margin: 8px 0 0 18px;
+      padding: 0;
+    }
+
+    .empty-state {
+      background: var(--color-soft-bg);
+      border-color: var(--color-border);
+      color: var(--color-muted);
+      text-align: center;
+      padding: 22px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    th, td {
+      text-align: left;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--color-border);
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--color-muted);
+      font-weight: 600;
+      text-transform: uppercase;
+      font-size: 0.7rem;
+      letter-spacing: 0.06em;
+      background: var(--color-soft-bg);
+    }
+
+    tr:last-child td { border-bottom: none; }
+
+    /* Decision summary cards */
+    .decision-list { display: flex; flex-direction: column; gap: 14px; }
+
+    .decision-card {
+      display: grid;
+      grid-template-columns: 64px 1fr auto;
+      gap: 18px;
+      align-items: flex-start;
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      background: var(--color-soft-bg);
+    }
+
+    .decision-rank {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--color-muted);
+      line-height: 1;
+      letter-spacing: 0.02em;
+    }
+
+    .decision-body .principal-line {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .decision-body .impact {
+      color: var(--color-muted);
+      font-style: italic;
+      margin-top: 8px;
+      font-size: 0.9rem;
+    }
+
+    .decision-owner { white-space: nowrap; }
+
+    /* Action item cards (Section 3) */
+    .action-list { display: flex; flex-direction: column; gap: 14px; }
+
+    .action-card {
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 14px;
+    }
+
+    .action-card .rank {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: var(--color-muted);
+      line-height: 1;
+    }
+
+    .action-card .top-rank { color: var(--color-high); }
+
+    .action-card .principal-line { font-weight: 600; }
+
+    .action-card .meta-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+
+    .remediation {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+                   "Liberation Mono", "Courier New", monospace;
+      background: #f8f8f8;
+      border-left: 3px solid var(--color-medium);
+      padding: 12px;
+      margin-top: 10px;
+      font-size: 0.85rem;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .remediation .label {
+      display: block;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 4px;
+    }
+
+    .owner-line {
+      text-align: right;
+      color: var(--color-muted);
+      font-size: 0.85rem;
+      margin-top: 6px;
+    }
+
+    details {
+      margin-top: 18px;
+      border: 1px solid var(--color-border);
+      border-radius: 10px;
+      padding: 12px 16px;
+      background: var(--color-soft-bg);
+    }
+
+    details > summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--color-muted);
+    }
+
+    details[open] > summary {
+      margin-bottom: 12px;
+    }
+
+    .footer {
+      color: var(--color-muted);
+      font-size: 0.8rem;
+      margin-top: 32px;
+      text-align: center;
+    }
+
+    @media print {
+      body { font-size: 12px; }
+      .section { page-break-inside: avoid; box-shadow: none; }
+      .remediation { background: #f8f8f8; }
+      a { color: var(--color-text); text-decoration: none; }
+    }
+
+    @media (max-width: 720px) {
+      .metrics { grid-template-columns: 1fr; }
+      .decision-card { grid-template-columns: 48px 1fr; }
+      .decision-owner { grid-column: 1 / -1; text-align: left; }
+      .action-card { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <h1>IAM Risk Digest</h1>
+    <div class="meta">
+      Generated {{ generated_at or "—" }}
+      {% if previous_snapshot_timestamp %}
+        · Compared against snapshot from {{ previous_snapshot_timestamp }}
+      {% endif %}
+      {% if cadence_days %}
+        · Cadence: every {{ cadence_days }} day(s)
+      {% endif %}
+    </div>
+
+    {# ----------------------------------------------------------------- #}
+    {# Section 0: Decision Summary                                       #}
+    {# ----------------------------------------------------------------- #}
+    {% if not is_baseline_run and top_three %}
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>Decision Summary</h2>
+          <div class="section-subtitle">
+            Start here. These are the three findings that matter most this week.
+          </div>
+        </div>
+      </div>
+
+      <div class="decision-list">
+        {% for finding in top_three %}
+        <div class="decision-card">
+          <div class="decision-rank">{{ "%02d"|format(finding.priority_rank) }}</div>
+          <div class="decision-body">
+            <div class="principal-line">
+              {{ principal_label(finding) }} — {{ finding.role_definition_name }}
+            </div>
+            <div>{{ finding.action_item }}</div>
+            {% if finding.projected_impact %}
+            <div class="impact">{{ finding.projected_impact }}</div>
+            {% endif %}
+          </div>
+          <div class="decision-owner">
+            <span class="pill">{{ finding.recommended_owner }}</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
+    {# ----------------------------------------------------------------- #}
+    {# Section 1: Executive Summary                                      #}
+    {# ----------------------------------------------------------------- #}
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>Executive Summary</h2>
+          <div class="section-subtitle">
+            {% if previous_snapshot_timestamp %}
+              Period: {{ previous_snapshot_timestamp }} — {{ generated_at }}
+            {% else %}
+              Scan date: {{ generated_at }}
+            {% endif %}
+          </div>
+        </div>
+        <div>
+          <span class="risk-badge risk-{{ overall_risk|lower }}">
+            {{ overall_risk }}
+          </span>
+        </div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric-card">
+          <div class="label">Total findings</div>
+          <div class="value">{{ totals.all }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">High severity</div>
+          <div class="value">{{ totals.high }}</div>
+        </div>
+        <div class="metric-card">
+          <div class="label">Actions required</div>
+          <div class="value">{{ totals.actions_required }}</div>
+        </div>
+      </div>
+
+      <p>{{ critical_summary }}</p>
+
+      {% if is_baseline_run %}
+      <div class="baseline-notice">
+        <strong>Baseline run.</strong>
+        This is the first time the digest has run against this tenant, so
+        there is no previous snapshot to diff against. The current state has
+        been recorded as the new baseline. Drift comparison will begin on the
+        next scheduled run.
+      </div>
+      {% endif %}
+
+      {% if data_quality_notices %}
+      <div class="data-quality-notice">
+        <strong>Data Quality Notice.</strong>
+        The following signals were unavailable or degraded for this scan:
+        <ul>
+          {% for notice in data_quality_notices %}
+          <li>{{ notice }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+      {% endif %}
+    </section>
+
+    {# ----------------------------------------------------------------- #}
+    {# Section 2: What Changed                                           #}
+    {# ----------------------------------------------------------------- #}
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>What Changed</h2>
+          <div class="section-subtitle">
+            Chronological list of access changes detected this period.
+          </div>
+        </div>
+      </div>
+
+      {% if not chronological %}
+      <div class="empty-state">
+        {% if is_baseline_run %}
+          Baseline run — no previous snapshot to diff against.
+        {% else %}
+          No changes detected since the last review.
+        {% endif %}
+      </div>
+      {% else %}
+      <table>
+        <thead>
+          <tr>
+            <th>Principal</th>
+            <th>Role</th>
+            <th>Scope</th>
+            <th>Change Type</th>
+            <th>Detected At</th>
+            <th>Severity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for finding in chronological %}
+          <tr>
+            <td>{{ principal_label(finding) }}</td>
+            <td>{{ finding.role_definition_name }}</td>
+            <td><span class="muted">{{ finding.scope }}</span></td>
+            <td>{{ change_type_label(finding.finding_type) }}</td>
+            <td>{{ fmt_datetime(finding.detected_at) }}</td>
+            <td>
+              <span class="badge badge-{{ finding.severity }}">
+                {{ finding.severity }}
+              </span>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+
+    {# ----------------------------------------------------------------- #}
+    {# Section 3: Prioritized Action Items                               #}
+    {# ----------------------------------------------------------------- #}
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>Prioritized Action Items</h2>
+          <div class="section-subtitle">
+            High and medium severity findings, ranked by composite priority.
+          </div>
+        </div>
+      </div>
+
+      {% if not actionable %}
+      <div class="empty-state">
+        No high or medium severity actions required this period.
+      </div>
+      {% else %}
+      <div class="action-list">
+        {% for finding in actionable %}
+        <div class="action-card">
+          <div class="rank {% if finding.priority_rank and finding.priority_rank <= 3 %}top-rank{% endif %}">
+            {{ "%02d"|format(finding.priority_rank or 0) }}
+          </div>
+          <div>
+            <div class="meta-row">
+              <span class="badge badge-{{ finding.severity }}">{{ finding.severity }}</span>
+              <span class="pill">{{ change_type_label(finding.finding_type) }}</span>
+            </div>
+            <div class="principal-line">
+              {{ principal_label(finding) }} — {{ finding.role_definition_name }}
+            </div>
+            <div>{{ finding.action_item }}</div>
+
+            <div class="remediation">
+              <span class="label">How to fix:</span>{{ finding.remediation_command }}
+            </div>
+
+            <div class="owner-line">
+              Recommended owner:
+              <span class="pill">{{ finding.recommended_owner }}</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if low_findings %}
+      <details>
+        <summary>Low priority items ({{ low_findings|length }})</summary>
+        <table>
+          <thead>
+            <tr>
+              <th>Principal</th>
+              <th>Role</th>
+              <th>Type</th>
+              <th>Action</th>
+              <th>Owner</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for finding in low_findings %}
+            <tr>
+              <td>{{ principal_label(finding) }}</td>
+              <td>{{ finding.role_definition_name }}</td>
+              <td>{{ change_type_label(finding.finding_type) }}</td>
+              <td>{{ finding.action_item }}</td>
+              <td><span class="muted">{{ finding.recommended_owner }}</span></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </details>
+      {% endif %}
+    </section>
+
+    {# ----------------------------------------------------------------- #}
+    {# Section 4: Full Audit Log                                         #}
+    {# ----------------------------------------------------------------- #}
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>Full Audit Log</h2>
+          <div class="section-subtitle">
+            Complete record of all access changes detected in this review
+            period. Suitable as compliance evidence and access-review
+            documentation.
+          </div>
+        </div>
+      </div>
+
+      {% if not full_audit %}
+      <div class="empty-state">
+        No findings recorded this period.
+      </div>
+      {% else %}
+      <table>
+        <thead>
+          <tr>
+            <th>Principal</th>
+            <th>Type</th>
+            <th>Role</th>
+            <th>Scope</th>
+            <th>Severity</th>
+            <th>Detected At</th>
+            <th>Age</th>
+            <th>Owner</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for finding in full_audit %}
+          <tr>
+            <td>{{ principal_label(finding) }}</td>
+            <td>{{ change_type_label(finding.finding_type) }}</td>
+            <td>{{ finding.role_definition_name }}</td>
+            <td><span class="muted">{{ finding.scope }}</span></td>
+            <td><span class="badge badge-{{ finding.severity }}">{{ finding.severity }}</span></td>
+            <td>{{ fmt_datetime(finding.detected_at) }}</td>
+            <td>{{ fmt_age(finding.age_hours) }}</td>
+            <td><span class="muted">{{ finding.recommended_owner }}</span></td>
+            <td>{{ finding.action_item }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </section>
+
+    <div class="footer">
+      IAM Risk Digest · Generated automatically · Snapshot
+      {{ snapshot_id or "—" }}
+    </div>
+
+  </div>
+</body>
+</html>
