@@ -50,6 +50,11 @@ _IMPACT_TEMPLATES: dict[str, str] = {
         "in your next compliance review without a documented business "
         "justification."
     ),
+    "rbac_stale": (
+        "If unresolved for 30 days, standing privileged access continues "
+        "without a documented review cycle, increasing audit and incident "
+        "exposure."
+    ),
     "pim_eligible_and_active": (
         "If unresolved for 30 days, this role is effectively ungoverned — "
         "the permanent active assignment bypasses the activation workflow "

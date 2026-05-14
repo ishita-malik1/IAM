@@ -29,6 +29,7 @@ _CHANGE_TYPE_LABELS: dict[str, str] = {
     "rbac_new": "New Assignment",
     "rbac_removed": "Assignment Removed",
     "rbac_escalated": "Scope Escalated",
+    "rbac_stale": "Standing Role Past Review Threshold",
     "rbac_orphaned": "Orphaned Access",
     "rbac_pim_bypass": "PIM Bypass",
     "pim_stale": "Stale PIM Activation",
@@ -135,10 +136,11 @@ def _data_quality_notices(
         )
     if quality.event_delay_detected and quality.event_delay_hours is not None:
         notices.append(
-            f"Graph API audit events are currently {quality.event_delay_hours} "
-            f"hours behind real time. Findings from the past "
-            f"{quality.event_delay_hours} hours may not be reflected in "
-            "this report."
+            "Assignment timestamps in this scan suggest directory data may be "
+            f"about {quality.event_delay_hours} hours stale relative to scan "
+            "time (heuristic based on the newest createdDateTime / createdOn "
+            "values collected, not the Graph audit log API). Very recent "
+            "changes may appear on the next run."
         )
     if preflight.graph_error:
         notices.append(f"Graph note: {preflight.graph_error}")

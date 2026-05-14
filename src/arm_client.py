@@ -17,6 +17,7 @@ from typing import Any, Iterable, Optional
 import requests
 
 from src.auth import get_arm_token
+from src.subscription_util import normalize_subscription_id
 
 logger = logging.getLogger(__name__)
 
@@ -158,7 +159,9 @@ def _normalize(item: dict[str, Any], cache: _RoleDefinitionCache) -> dict[str, A
 def fetch_arm_rbac() -> list[dict[str, Any]]:
     """Return every ARM RBAC assignment at subscription scope, or an empty list."""
 
-    subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID", "").strip()
+    subscription_id = normalize_subscription_id(
+        os.environ.get("AZURE_SUBSCRIPTION_ID", "")
+    )
     if not subscription_id:
         logger.info("AZURE_SUBSCRIPTION_ID is empty; skipping ARM collection.")
         return []

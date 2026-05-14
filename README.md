@@ -4,9 +4,24 @@
 
 ## Objective
 
-Build a Python-based automated governance tool called **IAM Risk Digest**. The tool connects to Microsoft Azure via Microsoft Graph API, pulls identity and access data, compares it against a previously saved snapshot, scores the findings by severity, ranks them using a composite priority engine, generates plain-language action items with specific remediation commands, and produces a structured four-layer HTML report that a non-technical IT or Engineering Manager can read and act on without IAM expertise.
+Build a Python-based automated governance tool called **IAM Risk Digest**. The tool connects to Microsoft Azure via Microsoft Graph API, pulls identity and access data, compares it against a previously saved snapshot, scores the findings by severity, ranks them using a composite priority engine, generates plain-language action items with specific remediation commands, and produces a structured **five-section** HTML report (Decision Summary, Executive Summary, What Changed, Prioritized Action Items, Full Audit Log) that a non-technical IT or Engineering Manager can read and act on without IAM expertise. **Every run writes a report**, including the baseline run (no prior snapshot), as a governance artifact.
 
 This is not a dashboard or web application. It is a script that runs on a schedule or on demand and produces a self-contained HTML report file as its output.
+
+---
+
+## Shipping status (implemented code)
+
+This repository contains the **runnable** IAM Risk Digest implementation (not only a specification).
+
+| Audience | Document |
+|----------|----------|
+| Operators (permissions, `.env`, first run, testing) | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) |
+| Product rationale, persona, exclusions, scoring | [PRODUCT_THINKING.md](PRODUCT_THINKING.md) |
+| Tenant / demo pointers | [docs/environment-setup.md](docs/environment-setup.md) |
+| Cron / Task Scheduler | [docs/scheduling.md](docs/scheduling.md) |
+
+The **Objective** section onward preserves the original Cursor build specification for traceability.
 
 ---
 
@@ -36,12 +51,16 @@ iam-risk-digest/
 ├── .gitignore
 ├── requirements.txt
 ├── run_digest.py
+├── test_connection.py
+├── PRODUCT_THINKING.md
 ├── src/
 │   ├── __init__.py
+│   ├── config.py
 │   ├── auth.py
 │   ├── preflight.py
 │   ├── graph_client.py
 │   ├── arm_client.py
+│   ├── subscription_util.py
 │   ├── snapshot.py
 │   ├── diff_engine.py
 │   ├── risk_scorer.py
@@ -55,7 +74,9 @@ iam-risk-digest/
 ├── reports/
 │   └── .gitkeep
 └── docs/
-    └── scheduling.md
+    ├── scheduling.md
+    ├── USER_GUIDE.md
+    └── environment-setup.md
 ```
 
 ---
@@ -75,6 +96,26 @@ REPORT_CADENCE_DAYS=7
 ```
 
 The `.gitignore` must include `.env`, `snapshots/*.json`, and `reports/*.html`.
+
+- **`STALE_PIM_THRESHOLD_HOURS`** — After how many hours an **active** PIM assignment (no end, or end in the future) is flagged as `pim_stale`. Also sets the lower bound for the **`pim_no_justification`** age window; the upper bound is **twice** this value (justification empty).
+- **`STALE_RBAC_THRESHOLD_HOURS`** — (1) **Medium vs low** severity split for `rbac_new` (assignment age since `createdDateTime`). (2) **Standing review:** emits **`rbac_stale`** for tier-0 directory roles (see `_STANDING_RBAC_REVIEW_ROLE_NAMES` in `src/diff_engine.py`) when the assignment is **not new this cycle**, `createdDateTime` is known, and standing age **exceeds** this threshold.
+
+---
+
+## Microsoft Graph application permissions (implemented)
+
+The app registration uses the **OAuth 2.0 client credentials** flow. Grant these **Microsoft Graph → Application** permissions and **admin consent**:
+
+| Permission | Purpose |
+|------------|---------|
+| **Directory.Read.All** | Preflight `/organization`; `$expand=principal` on directory role assignments |
+| **RoleManagement.Read.Directory** | Directory role assignments, PIM schedule instances, role definitions (human-readable role names) |
+
+**`AuditLog.Read.All`** is **not** required by the current code. The Data Quality “event delay” signal uses the latest **`createdDateTime` / `createdOn`** timestamps on assignments as a **proxy** for reporting lag; a future version may switch to `auditLogs/directoryAudits` if that permission is granted.
+
+**Optional ARM:** when `AZURE_SUBSCRIPTION_ID` is set, grant the service principal at least **Reader** on that subscription so ARM RBAC can be listed.
+
+**Connectivity check:** `python test_connection.py` (not `test_auth.py`).
 
 ---
 
@@ -120,8 +161,8 @@ class PreflightResult:
 ### `src/graph_client.py`
 
 Responsibilities:
-- Pull Entra ID directory role assignments: `GET https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignments?$expand=principal,roleDefinition`
-- Pull PIM activation instances: `GET https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignmentScheduleInstances?$expand=principal,roleDefinition`
+- Pull Entra ID directory role assignments: `GET .../roleManagement/directory/roleAssignments?$expand=principal` (Graph allows **only one** `$expand` target per request on these APIs). Resolve role display names via a separate paginated `GET .../roleManagement/directory/roleDefinitions?$select=id,displayName,templateId`, cached in-process for the run.
+- Pull PIM activation instances: `GET .../roleAssignmentScheduleInstances?$expand=principal` with the same role-definition cache.
 - Handle paginated responses by following `@odata.nextLink` until absent
 - Handle 403 by raising `PermissionError` identifying the missing scope
 - Handle 429 with exponential backoff, maximum three retries
@@ -206,23 +247,24 @@ class DataQuality:
     pim_data_available: bool
     arm_data_available: bool
     signal_conflict_count: int       # Roles removed in RBAC but still active in PIM log
-    event_delay_detected: bool       # Graph audit log lagging more than 2 hours behind UTC
+    event_delay_detected: bool       # Assignment timestamps suggest >2h lag vs UTC (proxy; not Graph audit API)
     event_delay_hours: float | None  # Actual lag in hours if detected
 ```
 
 Populate `DataQuality` before computing any findings. Pass it through to the report so the manager knows the coverage of the scan.
 
-**Finding types to detect:**
+**Finding types to detect** (twelve types; `rbac_stale` is posture/review, not a net-new assignment delta):
 
 | Finding type | Detection logic |
 |---|---|
 | `rbac_new` | In current snapshot, absent in previous |
 | `rbac_removed` | In previous snapshot, absent in current |
 | `rbac_escalated` | Scope changed from resource group to subscription level |
-| `rbac_orphaned` | Assignment exists but principal is disabled or absent in directory |
+| `rbac_stale` | Not baseline; assignment id **not** in this run’s “new” set; role display name in tier-0 review list (`_STANDING_RBAC_REVIEW_ROLE_NAMES` in `diff_engine.py`); `createdDateTime` known; standing age **>** `STALE_RBAC_THRESHOLD_HOURS` |
+| `rbac_orphaned` | Principal appears deleted or unresolvable (`$expand=principal` yields unknown / display equals id) |
 | `rbac_pim_bypass` | Direct Owner or Contributor assignment where PIM is configured |
 | `pim_stale` | Activation age exceeds `STALE_PIM_THRESHOLD_HOURS` and end time is null or future |
-| `pim_no_justification` | Justification is null or empty, age is between 24 and 48 hours |
+| `pim_no_justification` | Justification null or empty; activation age between **`STALE_PIM_THRESHOLD_HOURS`** and **twice** that value (inclusive) |
 | `pim_repeated` | Three or more activations by same principal for same role within 7-day window |
 | `pim_eligible_and_active` | Same principal has both eligible and permanent active assignment for same role |
 | `pim_absent` | PIM not configured in tenant (from preflight) |
@@ -272,12 +314,14 @@ Assign severity using the following rules in order. First match wins.
 | `service_principal_elevated` | high |
 | `pim_stale` and `age_hours` >= 168 | high |
 | `pim_eligible_and_active` | high |
-| `rbac_new` and `age_hours` >= 48 | medium |
+| `rbac_stale` and `age_hours` >= 168 | high |
+| `rbac_new` and `age_hours` >= `STALE_RBAC_THRESHOLD_HOURS` | medium |
+| `rbac_stale` and `age_hours` < 168 | medium |
 | `pim_stale` and `age_hours` >= 24 | medium |
 | `pim_no_justification` | medium |
 | `pim_repeated` | medium |
 | `pim_absent` | medium |
-| `rbac_new` and `age_hours` < 48 | low |
+| `rbac_new` and `age_hours` < `STALE_RBAC_THRESHOLD_HOURS` | low |
 | `rbac_removed` | low |
 | All others | low |
 
@@ -293,11 +337,11 @@ This is a new module. Its job is to rank all findings by business urgency and se
 priority_score = (severity_weight × 4) + min(age_hours / 24, 15) + principal_type_weight
 
 severity_weight:        high = 10, medium = 5, low = 1
-age_weight:             min(age_hours / 24, 30)
+age_weight (in code):   min(age_hours / 24, 15)   # capped at 15 days of age-equivalent contribution
 principal_type_weight:  ServicePrincipal = 5, User = 2, Group = 1
 ```
 
-The severity weight is multiplied by 3 to ensure a fresh high-severity finding outranks a very old low-severity one, while age weight ensures stale medium-severity findings do not remain permanently below new high-severity ones. Ties are broken by severity descending, then age descending.
+The severity weight is multiplied by **4** in code so high-severity items stay ahead of old low-severity noise; age is **capped** so very old findings do not dominate the score indefinitely. Ties are broken by severity descending, then age descending.
 
 **Responsibilities:**
 - Accept the full scored finding list from `risk_scorer.py`
@@ -317,6 +361,7 @@ The severity weight is multiplied by 3 to ensure a fresh high-severity finding o
 | `pim_eligible_and_active` | "If unresolved for 30 days, this role is effectively ungoverned — the permanent active assignment bypasses the activation workflow that PIM was configured to enforce." |
 | `pim_repeated` | "If unresolved for 30 days, the repeated activation pattern will continue to generate noise in the audit log, masking other changes that may require attention." |
 | `pim_absent` | "Without PIM, all privileged access in this tenant operates on a standing basis. Every day without JIT controls is a day where over-provisioned access cannot be time-bounded or justified on demand." |
+| `rbac_stale` | "If unresolved for 30 days, standing privileged access continues without a documented review cycle, increasing audit and incident exposure." |
 
 - For finding types not listed above, use: "If unresolved for 30 days, this finding will persist as an open risk item in future review cycles."
 - Return the full finding list (all findings, with `priority_rank` and `priority_score` populated on every item, and `projected_impact` populated only on the top three)
@@ -341,6 +386,8 @@ Responsibilities:
 | `pim_stale` | "A PIM activation is still active beyond its expected window. Confirm whether the access is still needed and deactivate it if not." | "In Entra PIM, navigate to Azure AD Roles > Active Assignments. Locate [principal_display_name] in [role_definition_name] and select Deactivate. If access is still required, have the user re-activate with a new justification and appropriate duration." | Manager Review |
 | `pim_eligible_and_active` | "This principal has both a PIM-eligible assignment and a permanent active assignment for the same role. The permanent assignment defeats the purpose of PIM and should be removed." | "In Entra PIM, navigate to Azure AD Roles > [role name] > Assignments. Under Active assignments, remove the permanent assignment for [principal_display_name]. The Eligible assignment should remain." | Cloud Administrator |
 | `rbac_new` (any age) | "A new role assignment was created recently and has not been confirmed as intentional. Verify the business justification before the next review cycle." | "In Entra portal, navigate to Roles and Administrators > [role name]. Confirm the assignment for [principal_display_name] was authorized. Document the business justification in your access review log." | Manager Review |
+| `rbac_escalated` | "An existing assignment was escalated from a resource group scope to subscription scope. Confirm this expansion was intentional and aligns with least privilege." | "In Azure portal, navigate to the subscription > Access Control (IAM). Review the [role] assignment for [principal_display_name]. If the broader scope is not required, remove it and reinstate the assignment at the original resource group scope." | Manager Review |
+| `rbac_stale` | "This privileged directory role has been assigned as a standing assignment longer than your configured review threshold. Confirm it is still required, documented, and appropriate for least privilege." | "In Entra portal, navigate to Roles and Administrators > [role name]. Review the assignment for [principal_display_name]. If the access is still needed, document the business justification and next review date. If PIM is enabled for this role, convert the assignment to Eligible-only and remove the permanent Active assignment." | Manager Review |
 | `pim_no_justification` | "A PIM activation was made without a documented justification. Follow up with the user to understand the reason for the activation." | "In Entra PIM, navigate to the audit log and locate the activation event for [principal_display_name] in [role_definition_name]. Contact the user to document the reason. Consider enabling justification as a required field in the PIM role settings." | IT Operations |
 | `pim_repeated` | "The same user has activated this privileged role multiple times in the past week. Evaluate whether repeated activation justifies making this role permanently eligible or whether a process gap exists." | "In Entra PIM, navigate to Azure AD Roles > [role name] > Settings. Review the activation policy. If frequent access is legitimate, consider increasing max activation duration. If the pattern is unexpected, review the user's recent activity in the audit log." | Security Team |
 | `pim_absent` | "Privileged Identity Management is not configured in this tenant. All privileged access is currently standing rather than just-in-time, which increases exposure." | "In Entra portal, navigate to Privileged Identity Management. Enable PIM for Azure AD Roles. Begin by assigning the highest-privilege roles (Global Administrator, Privileged Role Administrator) as Eligible-only. Schedule a follow-up to extend PIM coverage to all privileged roles within 30 days." | Security Team |
@@ -358,6 +405,7 @@ Responsibilities:
 - Render `templates/report.html.j2` with all data
 - Write output to `/reports/iam_digest_{ISO_date}.html`
 - The report must be fully self-contained with all styles in a `<style>` block. No external dependencies.
+- **Data Quality** copy in the Executive Summary must stay neutral: PIM/ARM gaps, signal conflicts, and **assignment-timestamp freshness** (not Graph audit log API unless extended later).
 
 ---
 
@@ -398,6 +446,7 @@ Human-readable change type labels:
 | `rbac_new` | New Assignment |
 | `rbac_removed` | Assignment Removed |
 | `rbac_escalated` | Scope Escalated |
+| `rbac_stale` | Standing Role Past Review Threshold |
 | `rbac_orphaned` | Orphaned Access |
 | `rbac_pim_bypass` | PIM Bypass |
 | `pim_stale` | Stale PIM Activation |
@@ -472,9 +521,11 @@ Entry point. Orchestrates the full execution pipeline:
 
 **No previous snapshot (first run)**
 - `load_latest_snapshot()` returns None
-- `DiffResult` returns empty with `is_baseline_run = True`
-- Report renders baseline notice in Section 0 (suppressed) and Section 1
-- Sections 2, 3, 4 show current state inventory with a label clarifying it is not a diff
+- `DiffResult` returns empty findings with `is_baseline_run = True`
+- A **self-contained HTML report is still written** to `/reports` (governance artifact for week one)
+- Section 0 (Decision Summary) is suppressed when there are no findings
+- Section 1 shows the **baseline** notice: drift comparison begins on the next run
+- Sections 2–4 show **no drift** messaging (empty tables / “no changes” copy), not a full live inventory export of every assignment
 
 **PIM not configured**
 - `pim_configured = False` from preflight
@@ -509,10 +560,10 @@ Entry point. Orchestrates the full execution pipeline:
 - Surface both findings independently — do not suppress either
 - Section 1 Data Quality Notice lists the count of conflicts detected
 
-**Graph audit log delay**
-- Compare latest audit event timestamp against current UTC
-- If gap exceeds 2 hours, set `DataQuality.event_delay_detected = True` and record `event_delay_hours`
-- Section 1 Data Quality Notice states: "Graph API audit events are currently [N] hours behind real time. Findings from the past [N] hours may not be reflected in this report."
+**Reporting lag (assignment-timestamp proxy)**
+- Implementation compares the **newest** `createdDateTime` / `createdOn` across collected assignments to current UTC (not the Graph **audit log** API).
+- If that gap exceeds 2 hours, set `DataQuality.event_delay_detected = True` and record `event_delay_hours`
+- Section 1 Data Quality Notice uses wording equivalent to: Graph-related freshness may be **[N] hours** behind; very recent changes might not appear until the next run. Granting **`AuditLog.Read.All`** in the future could allow replacing this heuristic with a true audit tail query.
 
 ---
 
@@ -540,3 +591,5 @@ Entry point. Orchestrates the full execution pipeline:
 [INFO] Report written to: reports/iam_digest_2025-01-15.html
 Summary: 9 findings | 3 HIGH | 2 MEDIUM | 4 LOW | Actions required: 5
 ```
+
+**Baseline (first) run:** the same pipeline runs; you may see no “Loaded previous snapshot” line and **0 drift findings**, but **`report_compiler` still writes** `reports/iam_digest_<date>.html` with the baseline notice in the Executive Summary.
