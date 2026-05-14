@@ -1,4 +1,4 @@
-# Cursor Prompt: IAM Risk Digest
+# IAM Risk Digest
 
 ---
 
@@ -26,24 +26,21 @@ The **Objective** section onward preserves the original Cursor build specificati
 ---
 
 ## Tech Stack
-
-- **Language**: Python 3.10+
-- **Authentication**: `msal` using the OAuth 2.0 client credentials flow
-- **HTTP client**: `requests`
-- **HTML templating**: `jinja2`
-- **Environment variable management**: `python-dotenv`
-- **Snapshot storage**: JSON files saved locally to a `/snapshots` directory
-- **Report output**: A self-contained HTML file saved to a `/reports` directory
-- **Scheduling**: The `schedule` library for the weekly automated run
-- **CLI entry point**: `argparse`
-
-Do not use any database. Do not use Flask, FastAPI, or any web framework. Do not use any frontend build tools.
+An automated identity governance tool that tells IT and Engineering Managers what changed in their cloud access environment, what the risk exposure is, and exactly what to do about it, without requiring a dedicated security team to interpret the output.
 
 ---
 
-## Project Structure
+## The Problem
 
-Create the following file and folder structure exactly:
+Cloud access permissions accumulate silently. An engineer gets elevated access during an incident, the incident closes, and the access stays. A startup moves fast and grants broad permissions because scoping them correctly can wait. A PIM activation runs past its intended window because nobody tracks when it was supposed to end. None of this feels urgent until a security audit, a compliance review, or an actual breach makes it urgent, at which point the remediation is expensive and the damage may already be done.
+
+The tooling that exists for this problem speaks to security engineers, not to the managers who carry the organizational risk. Microsoft's native access review features require manual setup per cycle, produce output that assumes IAM expertise, and do not combine directory role data with PIM activation data in a single readable view. The gap between tooling that exists and managers having actionable visibility is what this project addresses.
+
+---
+
+## What It Does
+
+IAM Risk Digest connects to your Azure Entra ID tenant via Microsoft Graph API, pulls a snapshot of all current role assignments and active PIM sessions, and compares it against the previous snapshot to identify what changed. It scores each change by severity, identifies the three highest-priority risks across the full finding set, generates plain-language action items with specific remediation instructions, and writes a structured HTML report.
 
 ```
 iam-risk-digest/
@@ -79,23 +76,7 @@ iam-risk-digest/
     └── environment-setup.md
 ```
 
----
-
-## Environment Variables
-
-The `.env.example` file must contain the following keys with empty values and inline comments:
-
-```
-AZURE_TENANT_ID=           # Your Entra ID tenant ID
-AZURE_CLIENT_ID=           # App registration client ID
-AZURE_CLIENT_SECRET=       # App registration client secret
-AZURE_SUBSCRIPTION_ID=     # Optional — leave blank if not using ARM RBAC
-STALE_PIM_THRESHOLD_HOURS=24
-STALE_RBAC_THRESHOLD_HOURS=48
-REPORT_CADENCE_DAYS=7
-```
-
-The `.gitignore` must include `.env`, `snapshots/*.json`, and `reports/*.html`.
+The scheduler runs as a background process on any machine with Python installed. In v1, the report is written to a local `/reports` directory. Refer to `docs/scheduling.md` for instructions on running the scheduler persistently via cron, Task Scheduler, or Azure Automation, and for options to deliver the report to a shared folder or email it to the manager automatically.
 
 - **`STALE_PIM_THRESHOLD_HOURS`** — After how many hours an **active** PIM assignment (no end, or end in the future) is flagged as `pim_stale`. Also sets the lower bound for the **`pim_no_justification`** age window; the upper bound is **twice** this value (justification empty).
 - **`STALE_RBAC_THRESHOLD_HOURS`** — (1) **Medium vs low** severity split for `rbac_new` (assignment age since `createdDateTime`). (2) **Standing review:** emits **`rbac_stale`** for tier-0 directory roles (see `_STANDING_RBAC_REVIEW_ROLE_NAMES` in `src/diff_engine.py`) when the assignment is **not new this cycle**, `createdDateTime` is known, and standing age **exceeds** this threshold.
@@ -119,46 +100,63 @@ The app registration uses the **OAuth 2.0 client credentials** flow. Grant these
 
 ---
 
-## Module Specifications
+## System Architecture
 
-### `src/auth.py`
+```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#e8f0fe', 'primaryTextColor': '#1a1a2e', 'primaryBorderColor': '#4a6fa5', 'lineColor': '#4a6fa5', 'secondaryColor': '#f0f4f8', 'tertiaryColor': '#ffffff', 'clusterBkg': '#f0f4f8', 'clusterBorder': '#4a6fa5', 'edgeLabelBackground': '#ffffff', 'fontFamily': 'sans-serif'}}}%%
+graph TD
+    subgraph Azure["Microsoft Azure"]
+        A[Entra ID Directory]
+        B[Microsoft Graph API]
+        C[RBAC Assignments]
+        D[PIM Activation Events]
+    end
 
-Responsibilities:
-- Use `msal.ConfidentialClientApplication` to acquire tokens via the client credentials flow
-- Expose two functions: `get_graph_token()` and `get_arm_token()`
-- `get_graph_token()` acquires a token with scope `https://graph.microsoft.com/.default`
-- `get_arm_token()` acquires a token with scope `https://management.azure.com/.default`
-- Both functions must cache the token in memory and only re-acquire when within 60 seconds of expiry
-- Raise a descriptive `AuthenticationError` (custom exception) if token acquisition fails, including the MSAL error code and description
+    subgraph Engine["IAM Risk Digest Engine"]
+        E[App Registration\nOAuth 2.0 Client Credentials]
+        F[Preflight Validator]
+        G[Snapshot Engine]
+        H[Diff Engine and Data Quality Layer]
+        I[Risk Scorer]
+        J[Priority Engine]
+        K[Action Generator]
+        L[Report Compiler]
+    end
 
----
+    subgraph Storage["Local Storage"]
+        M[Snapshot Store\n/snapshots]
+    end
 
-### `src/preflight.py`
+    subgraph Output["Report Output"]
+        N[Four-Layer HTML Report\n/reports]
+    end
 
-Responsibilities:
-- Validate that the app registration has the minimum required permissions before any data pull
-- Call `GET https://graph.microsoft.com/v1.0/organization` to confirm Graph API is accessible
-- Check whether PIM is configured by calling `GET https://graph.microsoft.com/v1.0/roleManagement/directory/roleAssignmentScheduleInstances?$top=1`
-- If `AZURE_SUBSCRIPTION_ID` is set, validate ARM access via `GET https://management.azure.com/subscriptions/{id}?api-version=2020-01-01`
-- Return a `PreflightResult` dataclass with the following fields:
+    subgraph Trigger["Execution Triggers"]
+        O[Weekly Scheduler]
+        P[Manual On-Demand]
+    end
 
-```python
-@dataclass
-class PreflightResult:
-    graph_accessible: bool
-    arm_accessible: bool
-    pim_configured: bool
-    subscription_accessible: bool
-    graph_error: str | None
-    arm_error: str | None
+    A --> B
+    C --> B
+    D --> B
+    B --> E
+    E --> F
+    F --> G
+    G --> H
+    M --> H
+    H --> I
+    I --> J
+    J --> K
+    K --> L
+    G --> M
+    L --> N
+    O --> F
+    P --> F
 ```
 
-- If `graph_accessible` is False, raise `PreflightError` and halt execution with a message identifying the missing permission
-- If `pim_configured` is False, do not halt — set the flag so the diff engine can surface this as a finding
-
 ---
 
-### `src/graph_client.py`
+## How to Use
 
 Responsibilities:
 - Pull Entra ID directory role assignments: `GET .../roleManagement/directory/roleAssignments?$expand=principal` (Graph allows **only one** `$expand` target per request on these APIs). Resolve role display names via a separate paginated `GET .../roleManagement/directory/roleDefinitions?$select=id,displayName,templateId`, cached in-process for the run.
@@ -168,78 +166,33 @@ Responsibilities:
 - Handle 429 with exponential backoff, maximum three retries
 - Return two lists of normalized dictionaries matching the snapshot schema
 
----
+Before running the tool, you need a Microsoft 365 Developer tenant or an Azure account with an active Entra ID directory, an app registration in Entra ID with the following Microsoft Graph API application permissions granted and admin consent approved: `RoleManagement.Read.All`, `AuditLog.Read.All`, and `Directory.Read.All`. You will also need Python 3.10 or later installed locally.
 
-### `src/arm_client.py`
+If you need to set up a demo environment from scratch, refer to `docs/environment-setup.md`.
 
-Responsibilities:
-- If `AZURE_SUBSCRIPTION_ID` is set, pull RBAC assignments at subscription scope: `GET https://management.azure.com/subscriptions/{id}/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01`
-- Resolve `roleDefinitionId` to a human-readable role name — cache lookups within the session
-- If `AZURE_SUBSCRIPTION_ID` is empty, return an empty list without error
-- Apply the same 429 retry logic as `graph_client.py`
+### Setup
 
----
+Clone the repository and create a virtual environment:
 
-### `src/snapshot.py`
-
-Responsibilities:
-- `save_snapshot(data: dict)` writes to `/snapshots/snapshot_{ISO_timestamp}.json`
-- `load_latest_snapshot()` reads the most recent file by timestamp. Returns `None` if none exists.
-- Snapshot schema:
-
-```json
-{
-  "snapshot_id": "uuid-v4",
-  "timestamp": "ISO 8601 UTC",
-  "is_pim_configured": true,
-  "graph_rbac_assignments": [
-    {
-      "id": "string",
-      "principal_id": "string",
-      "principal_display_name": "string",
-      "principal_type": "User | ServicePrincipal | Group",
-      "role_definition_name": "string",
-      "scope": "string",
-      "created_date_time": "ISO 8601 or null",
-      "is_pim_managed": false
-    }
-  ],
-  "pim_activations": [
-    {
-      "id": "string",
-      "principal_id": "string",
-      "principal_display_name": "string",
-      "principal_type": "User | ServicePrincipal | Group",
-      "role_definition_name": "string",
-      "scope": "string",
-      "start_date_time": "ISO 8601",
-      "end_date_time": "ISO 8601 or null",
-      "justification": "string or null",
-      "assignment_type": "Activated | Eligible"
-    }
-  ],
-  "arm_rbac_assignments": [
-    {
-      "id": "string",
-      "principal_id": "string",
-      "principal_type": "string",
-      "role_definition_name": "string",
-      "scope": "string",
-      "created_on": "ISO 8601 or null"
-    }
-  ]
-}
+```bash
+python -m venv venv
+source venv/bin/activate       # Mac / Linux
+venv\Scripts\activate          # Windows
+pip install -r requirements.txt
 ```
 
----
+Copy `.env.example` to `.env` and populate it with your credentials:
 
-### `src/diff_engine.py`
+```
+AZURE_TENANT_ID=           # Your Entra ID tenant ID
+AZURE_CLIENT_ID=           # App registration client ID
+AZURE_CLIENT_SECRET=       # App registration client secret
+AZURE_SUBSCRIPTION_ID=     # Optional, leave blank if not using ARM RBAC
+STALE_PIM_THRESHOLD_HOURS=24
+STALE_RBAC_THRESHOLD_HOURS=48
+```
 
-Responsibilities:
-- Accept the current snapshot, the previous snapshot (or None), and the `PreflightResult`
-- Return a `DiffResult` dataclass and a `DataQuality` dataclass
-
-**DataQuality dataclass:**
+Before running the full tool, verify your credentials are working:
 
 ```python
 @dataclass
@@ -275,30 +228,9 @@ Populate `DataQuality` before computing any findings. Pass it through to the rep
 
 ---
 
-### Finding Schema
-
-Every finding must conform to this schema:
-
-```json
-{
-  "finding_id": "uuid-v4",
-  "finding_type": "string",
-  "principal_id": "string",
-  "principal_display_name": "string",
-  "principal_type": "User | ServicePrincipal | Group",
-  "role_definition_name": "string",
-  "scope": "string",
-  "detected_at": "ISO 8601 UTC",
-  "age_hours": "float",
-  "activation_count": "integer or null",
-  "severity": "high | medium | low",
-  "priority_rank": "integer or null",
-  "priority_score": "float or null",
-  "projected_impact": "string or null",
-  "action_item": "string",
-  "remediation_command": "string",
-  "recommended_owner": "string"
-}
+**First run, establishes the baseline snapshot:**
+```bash
+python run_digest.py --run-now
 ```
 
 ---
@@ -569,17 +501,14 @@ Entry point. Orchestrates the full execution pipeline:
 
 ## Constraints
 
-- No credentials, tenant IDs, or subscription IDs hardcoded anywhere in source
-- No writes outside `/snapshots` and `/reports`
-- Read-only: no write, update, or delete calls to Graph API or ARM
-- Use Python `logging` module throughout — no bare `print()` inside modules
-- All datetime comparisons must be timezone-aware. All API datetimes parsed as UTC. No naive/aware mixing.
-- HTML report renders correctly in Chrome, Firefox, and Safari without JavaScript
-- `requirements.txt` must pin exact versions for all dependencies
+This starts a process that fires on the cadence set in `REPORT_CADENCE_DAYS`. The process must remain active for scheduling to work. See `docs/scheduling.md` for how to run this persistently.
 
----
+**Verbose output for debugging:**
+```bash
+python run_digest.py --run-now --verbose
+```
 
-## Expected Output on Successful Run
+### Expected Output
 
 ```
 [INFO] Preflight validation passed. PIM: configured. ARM: not configured.
@@ -591,5 +520,3 @@ Entry point. Orchestrates the full execution pipeline:
 [INFO] Report written to: reports/iam_digest_2025-01-15.html
 Summary: 9 findings | 3 HIGH | 2 MEDIUM | 4 LOW | Actions required: 5
 ```
-
-**Baseline (first) run:** the same pipeline runs; you may see no “Loaded previous snapshot” line and **0 drift findings**, but **`report_compiler` still writes** `reports/iam_digest_<date>.html` with the baseline notice in the Executive Summary.
