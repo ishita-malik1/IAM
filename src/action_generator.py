@@ -177,6 +177,22 @@ _TEMPLATES: dict[str, dict[str, str]] = {
         ),
         "owner": _OWNER_MANAGER,
     },
+    "rbac_stale": {
+        "action_item": (
+            "This privileged directory role has been assigned as a standing "
+            "assignment longer than your configured review threshold. "
+            "Confirm it is still required, documented, and appropriate for "
+            "least privilege."
+        ),
+        "remediation_command": (
+            "In Entra portal, navigate to Roles and Administrators > {role}. "
+            "Review the assignment for {principal}. If the access is still "
+            "needed, document the business justification and next review "
+            "date. If PIM is enabled for this role, convert the assignment "
+            "to Eligible-only and remove the permanent Active assignment."
+        ),
+        "owner": _OWNER_MANAGER,
+    },
 }
 
 

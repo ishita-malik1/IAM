@@ -9,12 +9,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from src.config import stale_rbac_threshold_hours
+
 logger = logging.getLogger(__name__)
 
 
 def _severity_for(finding: dict[str, Any]) -> str:
     finding_type = finding.get("finding_type", "")
     age = float(finding.get("age_hours") or 0.0)
+    rbac_new_threshold = stale_rbac_threshold_hours()
 
     if finding_type == "rbac_pim_bypass":
         return "high"
@@ -26,8 +29,12 @@ def _severity_for(finding: dict[str, Any]) -> str:
         return "high"
     if finding_type == "pim_eligible_and_active":
         return "high"
+    if finding_type == "rbac_stale" and age >= 168.0:
+        return "high"
 
-    if finding_type == "rbac_new" and age >= 48.0:
+    if finding_type == "rbac_new" and age >= rbac_new_threshold:
+        return "medium"
+    if finding_type == "rbac_stale":
         return "medium"
     if finding_type == "pim_stale" and age >= 24.0:
         return "medium"
@@ -38,7 +45,7 @@ def _severity_for(finding: dict[str, Any]) -> str:
     if finding_type == "pim_absent":
         return "medium"
 
-    if finding_type == "rbac_new" and age < 48.0:
+    if finding_type == "rbac_new" and age < rbac_new_threshold:
         return "low"
     if finding_type == "rbac_removed":
         return "low"

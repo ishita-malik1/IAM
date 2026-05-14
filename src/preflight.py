@@ -17,6 +17,7 @@ from typing import Optional
 import requests
 
 from src.auth import AuthenticationError, get_arm_token, get_graph_token
+from src.subscription_util import normalize_subscription_id
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,6 @@ _GRAPH_ORG_URL = "https://graph.microsoft.com/v1.0/organization"
 _GRAPH_PIM_URL = (
     "https://graph.microsoft.com/v1.0/roleManagement/directory/"
     "roleAssignmentScheduleInstances?$top=1"
-)
-_ARM_SUBSCRIPTION_URL = (
-    "https://management.azure.com/subscriptions/{sub_id}?api-version=2020-01-01"
 )
 
 _TIMEOUT_SECONDS = 30
@@ -126,18 +124,29 @@ def _check_pim() -> bool:
     return False
 
 
-def _check_arm(subscription_id: str) -> tuple[bool, bool, Optional[str]]:
+def _check_arm(subscription_id_raw: str) -> tuple[bool, bool, Optional[str]]:
     """Return ``(arm_accessible, subscription_accessible, error)``."""
+
+    sub_id = normalize_subscription_id(subscription_id_raw)
+    if not sub_id:
+        return False, False, (
+            "AZURE_SUBSCRIPTION_ID is set but is not a valid subscription GUID. "
+            "Use only the GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) from "
+            "Azure portal > Subscriptions, with no quotes or label text."
+        )
 
     try:
         token = get_arm_token()
     except AuthenticationError as exc:
         return False, False, f"ARM token acquisition failed: {exc}"
 
-    url = _ARM_SUBSCRIPTION_URL.format(sub_id=subscription_id)
+    base = f"https://management.azure.com/subscriptions/{sub_id}"
     try:
         response = requests.get(
-            url, headers=_auth_header(token), timeout=_TIMEOUT_SECONDS
+            base,
+            headers=_auth_header(token),
+            params={"api-version": "2020-01-01"},
+            timeout=_TIMEOUT_SECONDS,
         )
     except requests.RequestException as exc:
         return False, False, f"ARM subscription endpoint unreachable: {exc}"
@@ -152,8 +161,16 @@ def _check_arm(subscription_id: str) -> tuple[bool, bool, Optional[str]]:
         )
     if response.status_code == 404:
         return False, False, (
-            f"Subscription {subscription_id} not found. Verify "
+            f"Subscription {sub_id} not found. Verify "
             "AZURE_SUBSCRIPTION_ID is correct."
+        )
+    if response.status_code == 400:
+        body = (response.text or "")[:280]
+        return False, False, (
+            "ARM returned HTTP 400 (often MissingApiVersionParameter when the "
+            "subscription id in .env is malformed—quotes, spaces, or pasted "
+            "text without a GUID). Parsed id: "
+            f"{sub_id!r}. Response: {body}"
         )
     return False, False, (
         f"ARM subscription endpoint returned HTTP {response.status_code}: "

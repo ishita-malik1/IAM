@@ -9,12 +9,12 @@ conform to the schema documented in the project README. It also computes a
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Optional
 
+from src.config import stale_pim_threshold_hours, stale_rbac_threshold_hours
 from src.preflight import PreflightResult
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,30 @@ class DiffResult:
 
 
 _PRIVILEGED_ROLE_NAMES = {"owner", "contributor"}
+
+# Directory roles that warrant periodic review when held as standing assignments
+# (display names from Graph, compared case-insensitively).
+_STANDING_RBAC_REVIEW_ROLE_NAMES: frozenset[str] = frozenset(
+    {
+        "global administrator",
+        "privileged role administrator",
+        "privileged authentication administrator",
+        "security administrator",
+        "hybrid identity administrator",
+        "application administrator",
+        "cloud application administrator",
+        "exchange administrator",
+        "sharepoint administrator",
+        "intune administrator",
+        "azure devops administrator",
+        "domain name administrator",
+        "dns administrator",
+        "groups administrator",
+        "user administrator",
+        "partner tier1 support",
+        "partner tier2 support",
+    }
+)
 
 
 def _parse_iso(value: Optional[str]) -> Optional[datetime]:
@@ -121,17 +145,6 @@ def _is_orphaned_principal(assignment: dict[str, Any]) -> bool:
     if display_name and display_name == principal_id:
         return True
     return False
-
-
-def _stale_pim_threshold_hours() -> float:
-    raw = os.environ.get("STALE_PIM_THRESHOLD_HOURS", "24")
-    try:
-        return float(raw)
-    except ValueError:
-        logger.warning(
-            "STALE_PIM_THRESHOLD_HOURS=%r is not a number; defaulting to 24.", raw
-        )
-        return 24.0
 
 
 def _build_finding(
@@ -264,6 +277,54 @@ def _detect_rbac_changes(
     findings.extend(
         f for fid, f in removed_findings.items() if fid not in consumed_removed
     )
+    return findings
+
+
+def _detect_rbac_stale(
+    current_rbac: list[dict[str, Any]],
+    now: datetime,
+    new_assignment_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Flag standing tier-0 style directory roles older than ``STALE_RBAC_THRESHOLD_HOURS``.
+
+    Assignments that first appeared *this* run are covered by ``rbac_new`` and
+    are skipped here to avoid duplicate noise. Requires ``createdDateTime``
+    from Graph so age can be computed.
+    """
+
+    threshold = stale_rbac_threshold_hours()
+    findings: list[dict[str, Any]] = []
+    for item in current_rbac:
+        aid = item.get("id") or ""
+        if not aid or aid in new_assignment_ids:
+            continue
+        role = (item.get("role_definition_name") or "").strip().lower()
+        if role not in _STANDING_RBAC_REVIEW_ROLE_NAMES:
+            continue
+        created = _parse_iso(item.get("created_date_time"))
+        if not created:
+            continue
+        age = _hours_between(now, created)
+        if age <= threshold:
+            continue
+        findings.append(
+            _build_finding(
+                finding_type="rbac_stale",
+                principal_id=item.get("principal_id", ""),
+                principal_display_name=item.get("principal_display_name", ""),
+                principal_type=item.get("principal_type", ""),
+                role_definition_name=item.get("role_definition_name", ""),
+                scope=item.get("scope", ""),
+                detected_at=now,
+                age_hours=age,
+            )
+        )
+    if findings:
+        logger.info(
+            "Detected %d standing RBAC review finding(s) past %s h threshold.",
+            len(findings),
+            threshold,
+        )
     return findings
 
 
@@ -402,7 +463,7 @@ def _detect_pim_findings(
     if not pim_configured or not current_pim:
         return [], []
 
-    stale_threshold = _stale_pim_threshold_hours()
+    stale_threshold = stale_pim_threshold_hours()
     findings: list[dict[str, Any]] = []
 
     # ---- pim_stale & pim_no_justification (per activation) ----------------
@@ -433,7 +494,9 @@ def _detect_pim_findings(
             )
 
         justification = (activation.get("justification") or "").strip()
-        if not justification and 24.0 <= age <= 48.0:
+        pim_lo = stale_threshold
+        pim_hi = stale_threshold * 2.0
+        if not justification and pim_lo <= age <= pim_hi:
             findings.append(
                 _build_finding(
                     finding_type="pim_no_justification",
@@ -667,8 +730,15 @@ def run_diff(
             data_quality,
         )
 
+    current_index = _index_rbac(current_rbac)
+    previous_index = _index_rbac(previous_rbac)
+    new_assignment_ids = {
+        k for k in (current_index.keys() - previous_index.keys()) if k
+    }
+
     findings: list[dict[str, Any]] = []
     findings.extend(_detect_rbac_changes(current_rbac, previous_rbac, now))
+    findings.extend(_detect_rbac_stale(current_rbac, now, new_assignment_ids))
     findings.extend(_detect_orphaned(current_rbac, now))
     findings.extend(
         _detect_pim_bypass(current_rbac, current_arm, pim_configured, now)
