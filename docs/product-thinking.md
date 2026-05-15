@@ -1,6 +1,6 @@
 # Product Thinking: IAM Risk Digest
 
-This document covers the design rationale behind IAM Risk Digest: why the problem was framed this way, why existing tooling was considered insufficient, which capabilities were deliberately excluded and why, and how the priority, scoring, and data quality systems were designed. For install and run steps, see [docs/user-guide.md](docs/user-guide.md). The technical build specification lives in [README.md](README.md).
+This document covers the design rationale behind IAM Risk Digest: why the problem was framed this way, why existing tooling was considered insufficient, which capabilities were deliberately excluded and why, and how the priority, scoring, and data quality systems were designed. For install and run steps, see [docs/user_guide.md](docs/user_guide.md). The technical build specification lives in [README.md](README.md).
 
 ---
 
