@@ -1,6 +1,6 @@
 # Product thinking: IAM Risk Digest
 
-This document explains **why** the tool is shaped the way it is. For install and run steps, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md). The original build specification lives in [README.md](README.md).
+This document explains **why** the tool is shaped the way it is. For install and run steps, see [docs/User_guide.md](docs/User_guide.md). The original build specification lives in [README.md](README.md).
 
 ---
 
