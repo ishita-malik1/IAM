@@ -1,6 +1,6 @@
 # IAM Risk Digest — user guide
 
-How to configure, run, and interpret the tool. For **why** design choices exist, see [PRODUCT_THINKING.md](../PRODUCT_THINKING.md).
+How to configure, run, and interpret the tool. For **why** design choices exist, see [Product thinking.md](./Product thinking.md).
 
 ---
 
