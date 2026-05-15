@@ -65,8 +65,9 @@ iam-risk-digest/
 │   └── .gitkeep
 └── docs/
     ├── scheduling.md
-    ├── user guide.md
-    └── environment-setup.md
+    ├── product_thinkin.md
+    ├── user_guide.md
+    └── environment_setup.md
 ```
 
 ---
