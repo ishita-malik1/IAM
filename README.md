@@ -2,7 +2,7 @@
 
 A lightweight Azure IAM drift detection and reporting tool that snapshots RBAC and PIM assignment state over time, scores elevated access risks by severity and blast radius, and generates manager-readable remediation reports with copy-pasteable remediation commands.
 
-For the product strategy behind this tool, including persona decisions, what was deliberately not built and why, priority engine design, and roadmap reasoning, see [Product_Thinking.md](./docs/product thinking.md).
+For the product strategy behind this tool, including persona decisions, what was deliberately not built and why, priority engine design, and roadmap reasoning, see [Product_Thinking.md](/docs/product thinking.md).
 
 ---
 
