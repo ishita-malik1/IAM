@@ -1,170 +1,137 @@
 # Product Thinking: IAM Risk Digest
 
-This document captures the reasoning behind every significant decision made in designing IAM Risk Digest, covering what problems were identified, what was considered, what was built, what was deliberately left out, and why. It is intended as a record of product thinking, not a feature list.
+This document covers the design rationale behind IAM Risk Digest: why the problem was framed this way, why existing tooling was considered insufficient, which capabilities were deliberately excluded and why, and how the priority, scoring, and data quality systems were designed. For install and run steps, see [docs/USER_GUIDE.md](docs/USER_GUIDE.md). The technical build specification lives in [README.md](README.md).
 
 ---
 
-## Why This Problem
+## Problem Framing
 
-The starting point was not a solution. It was an observation made from working directly inside cloud infrastructure teams: access permissions are treated as a provisioning problem, not a lifecycle problem. The mental model most organizations operate under is that once access is granted correctly, the work is done. In practice, the access landscape drifts continuously from the moment it is set up.
+Cloud identity permissions have no natural expiry mechanism. When an engineer gets elevated access during an incident, the ticket closes but the access does not. When a startup moves fast and assigns subscription-level Contributor roles to avoid scoping delays, those assignments compound quietly as the team grows. When a PIM activation expires in the workflow but the underlying session persists, nothing in the default tooling flags it. Beyond drift from active changes, there is a second category: standing tier-0 directory roles that have simply never been reviewed, where nothing changed between snapshots but the assignment has been present for months.
 
-Two patterns drive most of this drift. In organizations under operational pressure, access gets escalated during incidents because speed matters more than scope. The incident resolves. The access does not get walked back, because walking it back introduces risk and nobody owns the follow-up. In high-growth environments without mature identity governance, the pattern is structural. Broad permissions get granted because scoping them correctly is a problem for later, and later never arrives on its own.
-
-The business consequence is not abstract. Over-permissioned standing access is consistently one of the primary vectors in cloud security incidents. Beyond breach risk, the compliance cost of unreviewed access is significant: SOC 2, ISO 27001, and NIST frameworks all require evidence of periodic access reviews, and organizations that cannot produce that evidence fail audits or spend disproportionate time and money manufacturing it retrospectively.
+The consequence is a growing gap between the access an organization believes its users have and the access they actually have. That gap becomes visible in three scenarios: a security audit requesting evidence of access reviews, a breach investigation tracing the attack path through an over-permissioned identity, or a compliance certification process requiring access control documentation that does not exist. The cost of detecting this gap early is low. The cost of discovering it through one of those three scenarios is not.
 
 ---
 
-## What Already Exists and Why It Is Not Enough
+## Why Existing Tooling Falls Short
 
-Before defining a solution, the existing tooling landscape was mapped honestly.
+The problem is not that tooling is absent. It is that the available tooling produces output for identity engineers and assumes the reader can navigate Entra ID, interpret role definition hierarchies, and write KQL against Log Analytics. The person who carries organizational accountability for access risk is usually a manager who does neither.
 
-Microsoft Privileged Identity Management handles just-in-time privileged access well for organizations that have fully adopted it. Its limitation is scope: PIM only governs roles assigned through its own workflows. Direct RBAC assignments made outside PIM, which are common in any environment that predates a PIM rollout or operates under time pressure, are invisible to PIM's reporting. Additionally, PIM's activation logs and assignment history are surfaced through the Entra portal in a format designed for identity engineers, not for the Engineering Manager whose name is on the audit report.
+**Privileged Identity Management** governs just-in-time access well for roles that flow through its workflows. It does not see direct RBAC assignments made outside its scope, which are common in any environment that predates a PIM rollout or operates under time pressure. Its reporting interface is designed for identity administrators.
 
-Entra ID Access Reviews support periodic review cycles but require manual setup for each cycle, produce output that assumes the reviewer understands role definitions and scope hierarchies, and offer no combined view of directory role assignments alongside PIM activation state. The reviewer is expected to bring context that most managers do not have.
+**Entra ID Access Reviews** support scheduled review cycles but require manual configuration per cycle, produce output that expects IAM familiarity, and offer no combined view of directory role assignments alongside PIM activation state.
 
-Azure Monitor and Log Analytics are powerful but require KQL expertise to query. They are not designed to be operated by a manager, and the signal-to-noise ratio of raw logs is too low to be actionable without significant processing work.
+**Azure Monitor and Log Analytics** are powerful but require query expertise. The signal-to-noise ratio of raw audit logs without processing is too high for a manager to act on.
 
-The gap across all of these tools is the same: the output speaks to identity engineers. The person who carries organizational risk for that output is usually a manager who does not have that background and should not need it to make good decisions about their team's access posture.
-
----
-
-## Market Segmentation and the v1 Target Decision
-
-Early in the design process it became clear that this problem looks different depending on organizational context, and that the solution needed to make a deliberate choice about which version of the problem to solve first.
-
-For startup-stage organizations (roughly 50 to 500 people), the acute pain is operational overhead. Access reviews are happening informally or not at all. There is no dedicated security function. The manager who needs to think about access governance is the same person managing infrastructure, oncall rotations, and hiring decisions. The value proposition for this segment is time recovery and structure, automated visibility that replaces ad hoc processes.
-
-For enterprise and MNC-scale organizations, the acute pain is different. Security posture and compliance are formal concerns with dedicated owners. The value proposition is risk reduction and audit evidence, proof that access is reviewed on a regular cadence with documented findings and remediation actions.
-
-The decision was made to target the startup segment as the primary v1 design constraint, with the enterprise segment served through the report's audit log layer without requiring the interface to be redesigned for them. The reasoning was practical: the startup environment is simpler to model, the problem is more visceral and immediate, and a tool that earns a manager's trust in a smaller organization will expand naturally into the enterprise use case. The reverse, building for enterprise first, tends to produce tools that are too complex for the environments where adoption is easiest.
-
-This segmentation is reflected in the report structure. The decision summary, executive summary, and action list are designed for the startup manager who needs to act on findings without IAM expertise. The full audit log is designed for the compliance lead at an enterprise customer who needs evidence, not guidance.
+The shared gap across all three: none surfaces a prioritized, plain-language answer to the question a manager actually needs answered. What changed, what is risky, and what do I do about it.
 
 ---
 
-## Persona Decision: Manager over Engineer
+## User and Persona Decision
 
-The original instinct was to build for the IAM Security Engineer, the person with the most technical context about identity risk. That instinct was reconsidered for a specific reason.
+The tool is designed for the IT Operations Manager or Engineering Manager at a company running workloads on Azure without a dedicated identity security function, typically 50 to 500 people. This person owns operational and compliance risk across their team's infrastructure and does not have time to become an IAM expert to do it.
 
-A security engineer is an individual contributor. They can navigate Entra ID directly, write queries against audit logs, and interpret role assignment scope hierarchies without assistance. Building a tool for them would narrow the product's reach, limit the business impact of the success metrics to individual-contributor productivity, and reduce the tool to a convenience layer over existing capabilities.
+The alternative persona considered was the IAM Security Engineer. That persona was dropped because a security engineer can already navigate the tooling that exists. Building for them produces a convenience layer over Entra ID rather than a capability that does not currently exist. The manager persona forces the output to be clear, prioritized, and actionable, which is a harder design constraint and a more defensible product position.
 
-The IT Operations Manager or Engineering Manager, by contrast, owns the organizational risk. They are accountable for audit findings, sign off on compliance attestations, and have the authority to direct remediation. Designing for them forces the output to be clear, prioritized, and actionable, which is a harder design challenge than producing a technically complete report.
-
-The engineer is still part of the workflow: they receive the remediation commands from their manager and execute them. But they are not the primary user. This distinction shapes every design decision downstream, particularly how findings are described, how actions are worded, and what the report's entry point looks like.
+Two organizational segments shaped the v1 scope decision. For startups, the acute pain is operational overhead: access reviews are informal or nonexistent, and the manager needs structure and automation. For enterprise organizations, the pain is compliance and security posture: formal requirements, audit evidence, and risk reduction. The report serves both through a layered structure. The Decision Summary and Action Items serve the startup manager who needs to act without IAM expertise. The Audit Log serves the enterprise compliance lead who needs evidence. v1 was scoped and tested against the startup segment because that environment is simpler to model and faster to validate. Enterprise-specific capabilities are planned for v2.
 
 ---
 
-## OKRs
+## What Was Deliberately Not Built
 
-Three objectives were defined before any feature decisions were made. The order is intentional: overhead reduction is the primary driver for v1, exposure reduction is the natural consequence of the tool working as designed, and audit readiness is the benefit that accrues to organizations that run the tool consistently over time.
-
-**Objective 1: Eliminate manual IAM tracking overhead for IT and Engineering Managers**
-
-Access review cycle time, measured from the point a review is initiated to the point a report is ready for action, should be reduced by 70 percent. All RBAC and PIM access changes should be captured automatically without manual log aggregation. Managers should have no reliance on spreadsheet-based access tracking within 30 days of adoption.
-
-**Objective 2: Reduce organizational exposure from unreviewed cloud access**
-
-Stale elevated access, defined as any elevated role assignment unreviewed for more than 30 days, should be reduced by 80 percent within 60 days of the first remediation cycle. Mean time to detect access drift should be reduced from weeks to 24 hours, matching the weekly report cadence. No standing Owner or Contributor assignments outside PIM should remain flagged as unreviewed after the first remediation cycle completes.
-
-**Objective 3: Make compliance evidence generation automatic and always available**
-
-A full audit-ready access report should be generatable in under five minutes on demand. All access change events should be logged with principal identity, role, scope, and timestamp. The access review cadence should be maintained without manual initiation by the manager or their team.
+| Excluded | Rationale |
+|---|---|
+| What-if blast simulation | Depends on Azure Resource Graph and tagging quality. Wrong answers harm trust. Deferred until a reliability validation story exists. |
+| Email and ticketing integration | External failure surfaces and scope creep. The file output model stays reliable without external dependencies. |
+| Hosted dashboard | Contradicts the zero-infrastructure deployment model. Snapshot JSON files can feed a future UI layer. |
+| Multi-tenant orchestration | Different authentication and data model from single-tenant. Single-tenant v1 first. |
+| Database | Local snapshot files match the lightweight script-plus-artifact deployment model. |
+| `AuditLog.Read.All` permission | Event delay transparency is achieved with a `createdDateTime` proxy. Adding a third permission scope expands the consent surface without materially improving v1 output quality. |
 
 ---
 
-## The Decision to Add a Priority Engine
+## Success Criteria
 
-An early version of the design produced a complete, well-organized report with no explicit guidance on where to start. Managers receiving a report with nine findings of varying severity face a prioritization problem that the tool was implicitly pushing back onto them. That is not decision support; it is information delivery.
+These are the operational outcomes v1 is designed to move.
 
-The priority engine was added to close that gap. Its job is to answer the question every manager will ask first: if I can only act on three things this week, which three?
+- A manager can read Decision Summary and Executive Summary in under ten minutes without opening any Azure portal.
+- Elevated or drifting access is classified, scored, and ranked rather than delivered as raw API rows.
+- Standing tier-0 directory roles that have never been reviewed are surfaced even when nothing changed between runs, via the `rbac_stale` finding type.
+- Data quality gaps are explicit when PIM, ARM, or timing signals are incomplete, so the manager knows the coverage boundary of each scan.
+- Every run produces a report, including the baseline run, so the governance record starts from day one.
 
-**Composite scoring formula:**
+---
+
+## Scoring and Priority Design
+
+### Finding Types
+
+The diff engine produces twelve finding types. Eleven are change-based, detected by comparing the current snapshot against the previous one. The twelfth, `rbac_stale`, is posture-based: it flags tier-0 directory roles (Global Administrator, Privileged Role Administrator, and equivalent) where `createdDateTime` is known, the assignment is not new this cycle, and the standing age exceeds `STALE_RBAC_THRESHOLD_HOURS`. This catches the "nobody touched this Global Admin for six months" scenario that pure diffing misses.
+
+`STALE_RBAC_THRESHOLD_HOURS` serves a dual role: it sets the standing review threshold for `rbac_stale` and it sets the medium-versus-low severity boundary for `rbac_new` (new assignments older than this threshold score medium; newer ones score low).
+
+### Risk Scoring
+
+Findings are assigned severity using a rule set where the first matching rule wins. High-signal finding types (PIM bypass, orphaned access, service principal elevation, very old PIM activations, eligible-and-active duplicates) are ordered before softer rules. The ordering is deliberate: severity should reflect the risk profile of the finding type, not just the age of the event.
+
+### Priority Engine
+
+Risk scoring assigns severity to individual findings. The priority engine ranks all findings against each other to answer a different question: given everything in this report, where should the manager's attention go first?
 
 ```
 priority_score = (severity_weight × 4) + min(age_hours / 24, 15) + principal_type_weight
 
-severity_weight:        high = 10, medium = 5, low = 1
-age_weight:             min(age_hours / 24, 15)   [capped at 15 days]
-principal_type_weight:  ServicePrincipal = 5, User = 2, Group = 1
+severity_weight:        high = 10,  medium = 5,  low = 1
+age_weight:             min(age_hours / 24, 15)     [capped at 15 days]
+principal_type_weight:  ServicePrincipal = 5,  User = 2,  Group = 1
 ```
 
-**Why these weights**
+The severity multiplier is set high enough to guarantee severity dominance across all age and principal type combinations. Age and blast-radius signals inform ranking within a severity tier; they do not override the risk scorer's severity judgment across tiers.
 
-The severity multiplier of 4 was chosen deliberately after verifying that it guarantees severity dominance over the maximum possible age and principal type contribution combined. A fresh high-severity finding must always outrank any low-severity finding regardless of how old it is. With a multiplier of 3, a 30-day-old low-severity service principal finding could mathematically outscore a fresh high-severity group finding, which contradicts the intent of the risk scorer's judgment. Raising the multiplier to 4 and capping age at 15 days eliminates that inversion.
+The age cap at 15 days reflects the reality that urgency signal plateaus after two weeks. Uncapped age accumulation would cause old low-priority findings to crowd out more recent, higher-severity ones over time.
 
-The age cap at 15 days reflects the reality that urgency signal plateaus. A finding that has been present for two weeks is overdue regardless of whether it has been present for 15 days or 45 days. Allowing age to accumulate indefinitely would cause very old low-priority findings to crowd out more recent, higher-severity ones.
+Service principals score 5 because they have no MFA layer, no behavioral anomaly detection baseline, and no HR-driven offboarding process. A compromised service principal operates silently in ways a compromised user account does not. Users score 2 because MFA, login anomaly detection, and structured offboarding provide meaningful mitigation layers even when access is over-provisioned.
 
-The principal type weights reflect blast radius and detectability rather than just risk level. A service principal scores 5 because non-human identities have no behavioral baseline, no MFA layer, no anomaly detection signal, and no HR-driven offboarding process. A compromised service principal is silent in ways that a compromised user account is not. A user account scores 2 because MFA, login anomaly detection, and offboarding processes provide meaningful mitigation layers even when access is over-provisioned. A group scores 1 because the risk is diffuse across all members rather than concentrated in a single identity, and group membership management is typically governed through a separate process.
-
-Ties are broken by severity descending, then by age descending.
-
-**Projected impact**
-
-For each of the top three findings, the priority engine adds a plain-English impact projection describing the organizational risk if the finding remains unresolved for 30 days. This is not a guarantee; it is a structured estimate based on finding type, intended to make the cost of inaction concrete rather than abstract. Managers respond to consequence framing better than to severity labels alone.
+The top three findings by priority score are surfaced in the Decision Summary with a 30-day impact projection for each. The projection is a structured estimate based on finding type, intended to make the cost of inaction concrete for a manager who may not have intuition for identity risk.
 
 ---
 
-## Data Quality and Designing for Uncertainty
+## Data Quality and Transparency
 
-A common failure mode in governance tooling is presenting incomplete data with complete confidence. When an API call fails silently, when a signal arrives late, or when two data sources contradict each other, a system that does not surface that uncertainty produces a false sense of coverage. A manager who believes they have reviewed all access changes because the report showed no issues, when in fact the ARM data was not collected, is in a worse position than a manager who knows the report has gaps.
+The tool surfaces four data quality signals alongside findings rather than presenting incomplete data as complete.
 
-Four data quality signals are tracked explicitly alongside findings.
+**PIM data availability.** Flagged when the PIM API returns no results, either because PIM is not configured or the permission scope is absent. PIM-specific finding types are skipped, and the absence is surfaced as a medium-severity `pim_absent` finding.
 
-PIM data availability is flagged when the PIM API returns no data, either because PIM is not configured in the tenant or because the relevant permission scope is missing. ARM data availability is flagged when no subscription ID is configured, so the manager knows that resource-level RBAC assignments were not included in the scan. Signal conflict count tracks cases where a role appears removed in the RBAC snapshot but remains active in the PIM audit log, a real phenomenon that occurs when assignments are deleted through one interface while sessions initiated through another remain open. Event delay detection compares the most recent audit log timestamp from Graph API against the current UTC time and flags when that gap exceeds two hours, indicating that Microsoft's audit pipeline may be running behind real time.
+**ARM data availability.** Flagged when no subscription ID is configured, so the manager knows resource-level RBAC assignments were not included in the scan.
 
-These are not error states. They are transparency statements, surfaced as a Data Quality Notice in the executive summary so the manager knows exactly what the report covers and what it does not. The tool is still useful with partial data, but the manager should know when the picture is partial.
+**Signal conflict count.** Tracks cases where a role appears removed in the RBAC snapshot but still active in the PIM activation log. Both findings are retained independently and the conflict count is reported in the Data Quality Notice.
 
----
+**Event delay detection.** Compares the most recent `createdDateTime` across collected Graph assignments and ARM `createdOn` values against current UTC. When the gap exceeds two hours, the report notes that very recent changes may not appear until the next run. This is a proxy heuristic, not a direct audit log query. If `AuditLog.Read.All` is granted in the future, the heuristic in `diff_engine.py` can be replaced with a `auditLogs/directoryAudits` tail query without touching any other module.
 
-## Feature Prioritization: What Made It In and Why
-
-Features were evaluated against three criteria before being included in v1: direct impact on the primary OKR, technical feasibility within the lightweight deployment model, and signal clarity for the manager persona. Features that scored well on all three were included. Features that required infrastructure complexity, introduced ambiguity in the output, or primarily served a secondary persona were deferred.
-
-RBAC assignment diffing made it in because it is the core signal source. PIM activation tracking made it in because the original problem analysis identified PIM staleness as one of the most common and least visible risk patterns. Risk scoring made it in because a flat list of changes is not actionable without severity context. The priority engine made it in because ranking findings without surfacing the top priorities shifts too much cognitive work back onto the manager. Specific remediation commands made it in because action items that tell a manager what to do without telling their administrator how to do it create a bottleneck in the remediation workflow.
+The Data Quality Notice in the Executive Summary uses neutral language. These are transparency statements, not error states.
 
 ---
 
-## What Was Considered and Not Built
+## Deployment Constraints and Assumptions
 
-Several capabilities were evaluated seriously and deferred. The reasoning behind each deferral is documented here because the decisions are as important as the features that were included.
+These are the operational boundaries of v1. They are not gaps to fix; they are deliberate constraints that define the deployment model.
 
-**What-if simulation layer**
+**Two Graph API permissions required.** `Directory.Read.All` and `RoleManagement.Read.Directory` are the minimum. Admin consent must be granted by a Global Administrator before the tool can run. `AuditLog.Read.All` is explicitly not required in v1.
 
-The most ambitious idea evaluated was a simulation that would answer the question: "If I remove this Owner role, which services might break?" The appeal is obvious; it transforms the tool from a reporting instrument into a decision support system with consequence modeling.
+**ARM support is optional.** Subscription-level RBAC detection requires a configured `AZURE_SUBSCRIPTION_ID` and ARM Reader access. Without it, the tool operates on directory-role and PIM data only. ARM absence is reported in the Data Quality Notice rather than treated as a failure condition.
 
-The deferral was not a resource decision. It was a correctness decision. Answering that question accurately requires mapping Azure resource dependencies: which applications authenticate using that service principal, which pipelines assume that role's permissions, which cross-subscription operations rely on that scope. That mapping requires Azure Resource Graph at scale, and the quality of the answer is entirely dependent on the completeness of tagging, documentation, and dependency tracking in the tenant. In most real environments, that data is incomplete. A simulation that says "removing this role may affect 3 services" when the actual number is 7, or 0, actively misleads the manager into a worse decision than no simulation would have produced. The feature was logged as a long-term v3 consideration requiring Azure Resource Graph integration and a validation layer before it should be surfaced to a non-technical manager.
+**Audit log availability is estimated.** Event delay uses `createdDateTime` on assignments as a proxy for pipeline freshness. The tool continues to diff snapshot state and flags estimated lag in the Data Quality Notice when the gap is significant.
 
-**Email delivery**
+**Single-tenant only.** One `.env` configuration maps to one Entra ID tenant. There is no cross-tenant orchestration in v1.
 
-Delivering the weekly digest directly to the manager's inbox was evaluated as a strong usability improvement for the startup persona, where reducing any friction in the consumption of the report increases the likelihood it gets acted on. It was deferred from v1 because it introduces SMTP or notification service configuration that shifts implementation complexity away from the core detection logic during the initial build. The report path is designed to be dropped into an email manually as an attachment with no loss of fidelity, and the scheduler produces a local file that can be integrated with a notification pipeline as a separate post-v1 step.
+**Local filesystem persistence.** Snapshots are JSON files written under `snapshots/`. Snapshot filenames use hyphens instead of colons in the ISO timestamp to remain valid on Windows NTFS while still sorting correctly. There is no database dependency.
 
-**Web-based dashboard**
+**No hosting required.** The tool runs as a Python process on any machine with network access to `graph.microsoft.com` and optionally `management.azure.com`. The scheduler is a blocking process rather than a daemon. Persistent scheduling requires an external mechanism documented in `docs/scheduling.md`.
 
-A persistent dashboard showing trend data across multiple report cycles was considered for two reasons: it would let managers track whether their risk score was improving over time, and it would make the tool more visually demonstrable. It was deferred because it requires hosting infrastructure, a web server and a persistent data store, that contradicts the lightweight deployment model making this tool accessible to the startup persona. The audit log files and snapshot JSON files produced by the tool are the raw material for a dashboard layer and can be fed into one in a post-v1 integration.
-
-**Ticketing system integration**
-
-Automatically creating remediation tickets in ServiceNow or Jira from the action items list would close the loop between finding and resolution tracking. It was deferred because it requires external API credentials, introduces dependencies on the target platform's schema and authentication model, and creates a new failure surface: if the ticketing integration is down, the digest fails to complete. The remediation commands in the action list are designed to be pasted into a ticket manually until an integration layer is ready to handle that step reliably.
-
-**Multi-tenant support**
-
-Supporting multiple Entra ID tenants from a single tool instance would serve managed service providers and enterprise organizations with multiple Azure directories. It was deferred because the startup persona operates in a single tenant, the authentication model becomes significantly more complex with multi-tenant support, and it represents a platform expansion that belongs in a v2 design cycle when the single-tenant model is validated.
-
----
-
-## Roadmap
-
-Version 2 is designed around the enterprise and MNC segment, where the primary value driver shifts from overhead reduction to compliance and security posture. The planned additions are email delivery of the weekly digest, ServiceNow and Jira integration for automated ticket creation from action items, multi-tenant support, and a historical trend view showing risk score movement over rolling 90-day windows.
-
-Version 3 is the longer-term platform vision, contingent on two prerequisites: Azure Resource Graph integration for resource dependency mapping, and a validation framework for simulation outputs. With those in place, the what-if simulation layer becomes viable. The v3 vision is a tool that not only tells managers what changed and what to do, but models the downstream consequences of remediation decisions before they are made.
-
-The sequencing reflects a deliberate philosophy: a tool that does one thing well and gets used consistently creates more organizational value than a feature-complete system that requires a dedicated owner to operate.
+**Read-only.** The tool makes no write, update, or delete calls to any Microsoft API. It writes only to `snapshots/` and `reports/` on the local filesystem.
 
 ---
 
 ## Processing Logic
-
-The flowchart below traces the full execution path of a single report run, including the decision branches that handle first-run behavior, clean environments with no drift, and the grouping logic that prevents repeated PIM activations from flooding the report with redundant findings.
 
 ```mermaid
 flowchart TD
@@ -173,18 +140,18 @@ flowchart TD
     C -- No --> D[Exit with error identifying\nmissing permission scope]
     C -- Yes --> E[Pull RBAC assignments\nfrom Graph API]
     E --> F[Pull PIM activation\nevents from Graph API]
-    F --> G[Evaluate data quality:\nPIM availability, ARM availability,\nsignal conflicts, event delay]
+    F --> G[Evaluate data quality:\nPIM availability, ARM availability,\nsignal conflicts, event delay proxy]
     G --> H{Previous snapshot\nexists?}
 
-    H -- No --> I[Establish baseline snapshot\nLabel as first-run]
-    I --> J[Output state inventory\nNo drift calculated]
+    H -- No --> I[Establish baseline snapshot]
+    I --> J[Write baseline report\nNo drift calculated\nGovernance artifact from run one]
     J --> W([End])
 
     H -- Yes --> K[Load most recent snapshot]
-    K --> L[Diff Engine: compare\ncurrent state vs previous]
-    L --> M{Changes\ndetected?}
+    K --> L[Diff Engine: compare current\nstate vs previous snapshot\nAlso emit rbac_stale for standing\ntier-0 roles past review threshold]
+    L --> M{Changes or\nstale findings?}
 
-    M -- No --> N[Generate clean report\nGreen risk score\nData quality notice if applicable]
+    M -- No --> N[Write clean report\nGreen risk score]
     N --> U[Save current snapshot]
 
     M -- Yes --> O[Risk Scorer: assign\nseverity to each finding]
@@ -197,8 +164,16 @@ flowchart TD
     R --> S
 
     S --> T[Action Generator: generate\nplain-language action items\nand specific remediation commands]
-    T --> V[Report Compiler: render\nfour-layer HTML report\nwith Decision Summary]
+    T --> V[Report Compiler: render\nfive-section HTML report]
     V --> U
     U --> X[Write HTML to /reports]
     X --> W([End])
 ```
+
+---
+
+## Roadmap
+
+**v2** targets the enterprise and MNC segment, where the primary value driver shifts from overhead reduction to compliance posture. Planned additions: email delivery, ServiceNow and Jira integration for automated ticket creation, multi-tenant support, and a 90-day historical trend view of risk score movement.
+
+**v3** is contingent on Azure Resource Graph integration and a simulation validation layer. With those in place, the what-if simulation becomes viable: modeling downstream service impact before a remediation action is taken. The feature depends on reliable dependency mapping and output validation before it can be surfaced safely to non-technical users.
