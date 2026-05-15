@@ -2,7 +2,7 @@
 
 For **Microsoft Graph app registration**, **permissions**, **`.env`**, and **connectivity checks**, use the single operator guide:
 
-→ **[USER_GUIDE.md](USER_GUIDE.md)** · Product rationale: **[PRODUCT_THINKING.md](../PRODUCT_THINKING.md)**
+→ **[User guide](user_guide.md)** · Product rationale: **[Product thinking](product_thinking.md)**
 
 ### Optional: developer / demo tenant
 
