@@ -15,12 +15,17 @@ the app registration's credentials and permissions.
 
 from __future__ import annotations
 
-import os
 import sys
 
 import msal
 import requests
 from dotenv import load_dotenv
+
+from src.config import (
+    require_azure_client_id,
+    require_azure_client_secret,
+    require_azure_tenant_id,
+)
 
 GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
@@ -54,22 +59,13 @@ ENDPOINTS: list[tuple[str, str, str, bool]] = [
 def main() -> int:
     load_dotenv()
 
-    tenant_id = os.getenv("AZURE_TENANT_ID", "").strip()
-    client_id = os.getenv("AZURE_CLIENT_ID", "").strip()
-    client_secret = os.getenv("AZURE_CLIENT_SECRET", "").strip()
-
-    missing = [
-        name
-        for name, value in (
-            ("AZURE_TENANT_ID", tenant_id),
-            ("AZURE_CLIENT_ID", client_id),
-            ("AZURE_CLIENT_SECRET", client_secret),
-        )
-        if not value
-    ]
-    if missing:
-        print(f"ERROR: missing env vars: {', '.join(missing)}")
-        print("Copy .env.example to .env and fill in the values.")
+    try:
+        tenant_id = require_azure_tenant_id()
+        client_id = require_azure_client_id()
+        client_secret = require_azure_client_secret()
+    except ValueError as exc:
+        print(f"ERROR: {exc}")
+        print("Copy .env.example to .env and set real GUIDs/secrets (one value per line).")
         return 1
 
     app = msal.ConfidentialClientApplication(

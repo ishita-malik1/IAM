@@ -8,13 +8,18 @@ memory and only re-acquired when within 60 seconds of expiry.
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
 
 import msal
+
+from src.config import (
+    require_azure_client_id,
+    require_azure_client_secret,
+    require_azure_tenant_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,23 +64,12 @@ class _TokenManager:
         if self._app is not None:
             return self._app
 
-        tenant_id = os.environ.get("AZURE_TENANT_ID", "").strip()
-        client_id = os.environ.get("AZURE_CLIENT_ID", "").strip()
-        client_secret = os.environ.get("AZURE_CLIENT_SECRET", "").strip()
-
-        missing = [
-            name
-            for name, value in (
-                ("AZURE_TENANT_ID", tenant_id),
-                ("AZURE_CLIENT_ID", client_id),
-                ("AZURE_CLIENT_SECRET", client_secret),
-            )
-            if not value
-        ]
-        if missing:
-            raise AuthenticationError(
-                "Missing required environment variables: " + ", ".join(missing)
-            )
+        try:
+            tenant_id = require_azure_tenant_id()
+            client_id = require_azure_client_id()
+            client_secret = require_azure_client_secret()
+        except ValueError as exc:
+            raise AuthenticationError(str(exc)) from exc
 
         authority = f"https://login.microsoftonline.com/{tenant_id}"
         self._app = msal.ConfidentialClientApplication(
