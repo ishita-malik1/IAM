@@ -145,8 +145,10 @@ The app registration uses the OAuth 2.0 client credentials flow. Grant the follo
 
 ## Sample Output
 
-<!-- Add screenshot of the Decision Summary section here after first demo run -->
-<!-- Add screenshot of the Action Items section here -->
+
+<img width="1205" height="623" alt="1" src="https://github.com/user-attachments/assets/04e7af20-594c-4578-8888-5d5ba71daf39" />
+<img width="1182" height="575" alt="2" src="https://github.com/user-attachments/assets/ade3f713-c3ce-4000-aa5c-95b9ae0eb200" />
+<img width="1161" height="738" alt="3" src="https://github.com/user-attachments/assets/d71bf700-61e0-432e-b84e-a9527ffff68e" />
 
 A representative finding from the Decision Summary:
 
